@@ -518,6 +518,7 @@ public class SerializedPipesPlatformTest extends PlatformTestCase
       }
 
     properties.put( "mapred.map.tasks", 1 );
+    properties.put( "mapreduce.job.maps", 1 );
 
     Flow flow = new HadoopFlowConnector( properties ).connect( sources, sink, splice );
 

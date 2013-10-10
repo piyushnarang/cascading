@@ -21,7 +21,8 @@
 //ext.hadoopVersion = '0.20.2' // no longer supported
 //ext.hadoopVersion = '0.20.205.0' // missing maven deps
 //ext.hadoopVersion = '1.0.4'  // missing maven deps
-ext.hadoopVersion = '1.1.2'
+//ext.hadoopVersion = '1.1.2'
+ext.hadoopVersion = '2.0.5-alpha'
 
 if( System.properties[ 'hadoop.release.final' ] )
   hadoopVersion = System.properties[ 'hadoop.release.final' ]
@@ -32,16 +33,25 @@ dependencies {
 
   providedCompile group: 'org.slf4j', name: 'slf4j-api', version: '1.7.2'
 
-  providedCompile( group: 'org.apache.hadoop', name: 'hadoop-core', version: hadoopVersion ) {
-    exclude group: 'ant'
-    exclude group: 'junit'
-    exclude group: 'oro' // causes transient build maven failures, ftw
-  }
-
   testCompile project( path: ':cascading-platform', configuration: 'testArtifacts' )
+}
 
-  testCompile( group: 'org.apache.hadoop', name: 'hadoop-test', version: hadoopVersion ) {
-    exclude group: 'oro' // causes transient build maven failures, ftw
+if( hadoopVersion.startsWith( "2.0." ) )
+{
+  archivesBaseName = 'cascading-hadoop2'
+
+  dependencies {
+    providedCompile( group: 'org.apache.hadoop', name: 'hadoop-mapreduce-client-core', version: hadoopVersion ) {
+      exclude group: 'ant'
+      exclude group: 'junit'
+    }
+
+    providedCompile( group: 'org.apache.hadoop', name: 'hadoop-common', version: hadoopVersion ) {
+      exclude group: 'ant'
+      exclude group: 'junit'
+    }
+
+    testCompile group: 'org.apache.hadoop', name: 'hadoop-minicluster', version: hadoopVersion
   }
 }
 
@@ -53,6 +63,16 @@ if( hadoopVersion.startsWith( "1.1." ) )
 if( hadoopVersion.startsWith( "1.0." ) )
 {
   dependencies {
+    providedCompile( group: 'org.apache.hadoop', name: 'hadoop-core', version: hadoopVersion ) {
+      exclude group: 'ant'
+      exclude group: 'junit'
+      exclude group: 'oro' // causes transient build maven failures, ftw
+    }
+
+    testCompile( group: 'org.apache.hadoop', name: 'hadoop-test', version: hadoopVersion ) {
+      exclude group: 'oro' // causes transient build maven failures, ftw
+    }
+
     testCompile group: 'commons-io', name: 'commons-io', version: '2.1'
 
     testRuntime 'javax.ws.rs:jsr311-api:1.1.1' // missed dep in hadoop, go figure

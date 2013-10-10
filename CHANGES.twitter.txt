@@ -1,0 +1,7 @@
+Cascading Change Log (Twitter)
+
+2.2.0.t1
+
+  Upgraded to hadoop 2.0.5-alpha. (sjlee)
+
+  Enabled builds based on hadoop 2.0. (sjlee)

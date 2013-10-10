@@ -128,6 +128,9 @@ public class HadoopPlatform extends TestPlatform
       JobConf conf = new JobConf();
 
       conf.setInt( "mapred.job.reuse.jvm.num.tasks", -1 );
+      conf.setBoolean( "yarn.is.minicluster", true );
+      // disable blacklisting hosts not to fail localhost during unit tests
+      conf.setBoolean( "yarn.app.mapreduce.am.job.node-blacklisting.enable", false );
 
       dfs = new MiniDFSCluster( conf, 4, true, null );
       fileSys = dfs.getFileSystem();

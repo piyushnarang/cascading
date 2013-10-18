@@ -27,6 +27,7 @@ import java.net.URISyntaxException;
 import java.util.Map;
 
 import cascading.flow.FlowProcess;
+import cascading.flow.hadoop.util.HadoopUtil;
 import cascading.scheme.Scheme;
 import cascading.scheme.hadoop.SequenceFile;
 import cascading.tap.SinkMode;
@@ -41,6 +42,7 @@ import cascading.tuple.TupleEntryCollector;
 import cascading.tuple.TupleEntryIterator;
 import cascading.tuple.hadoop.TupleSerialization;
 import cascading.util.Util;
+
 import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -469,12 +471,12 @@ public class Hfs extends Tap<JobConf, RecordReader, OutputCollector> implements 
     {
     String scheme = getLocalModeScheme( conf, "file" );
 
-    if( !conf.get( "mapred.job.tracker", "" ).equalsIgnoreCase( "local" ) && qualifiedPath.toUri().getScheme().equalsIgnoreCase( scheme ) )
+    if( !HadoopUtil.isLocal( conf ) && qualifiedPath.toUri().getScheme().equalsIgnoreCase( scheme ) )
       {
       if( LOG.isInfoEnabled() )
         LOG.info( infoMessage + toString() );
 
-      conf.set( "mapred.job.tracker", "local" ); // force job to run locally
+      HadoopUtil.setLocal( conf ); // force job to run locally
       }
     }
 

@@ -20,6 +20,10 @@
 
 package cascading.flow.hadoop;
 
+import static data.InputData.inputFileLower;
+import static data.InputData.inputFileUpper;
+import static java.util.concurrent.Executors.newSingleThreadExecutor;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +32,9 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+
+import org.apache.hadoop.mapred.JobConf;
+import org.junit.Test;
 
 import cascading.PlatformTestCase;
 import cascading.flow.FailingFlowListener;
@@ -38,6 +45,7 @@ import cascading.flow.Flows;
 import cascading.flow.LockingFlowListener;
 import cascading.flow.hadoop.planner.HadoopFlowStepJob;
 import cascading.flow.hadoop.planner.HadoopPlanner;
+import cascading.flow.hadoop.util.HadoopUtil;
 import cascading.flow.planner.FlowStepJob;
 import cascading.operation.BaseOperation;
 import cascading.operation.Debug;
@@ -57,12 +65,6 @@ import cascading.tap.Tap;
 import cascading.tap.hadoop.Hfs;
 import cascading.tap.hadoop.Lfs;
 import cascading.tuple.Fields;
-import org.apache.hadoop.mapred.JobConf;
-import org.junit.Test;
-
-import static data.InputData.inputFileLower;
-import static data.InputData.inputFileUpper;
-import static java.util.concurrent.Executors.newSingleThreadExecutor;
 
 /**
  *
@@ -93,8 +95,7 @@ public class FlowPlatformTest extends PlatformTestCase
 
     FlowStep step = (FlowStep) steps.get( 0 );
 
-    String tracker = ( (HadoopFlowStep) step ).getInitializedConfig( flow.getFlowProcess(), HadoopPlanner.createJobConf( props ) ).get( "mapred.job.tracker" );
-    boolean isLocal = tracker.equalsIgnoreCase( "local" );
+    boolean isLocal = HadoopUtil.isLocal( ( (HadoopFlowStep) step ).getInitializedConfig( flow.getFlowProcess(), HadoopPlanner.createJobConf( props ) ) );
 
     assertTrue( "is not local", isLocal );
     }
@@ -118,8 +119,7 @@ public class FlowPlatformTest extends PlatformTestCase
 
     FlowStep step = (FlowStep) steps.get( 0 );
 
-    String tracker = ( (HadoopFlowStep) step ).getInitializedConfig( flow.getFlowProcess(), HadoopPlanner.createJobConf( props ) ).get( "mapred.job.tracker" );
-    boolean isLocal = tracker.equalsIgnoreCase( "local" );
+    boolean isLocal = HadoopUtil.isLocal( ( (HadoopFlowStep) step ).getInitializedConfig( flow.getFlowProcess(), HadoopPlanner.createJobConf( props ) ) );
 
     assertTrue( "is not local", isLocal );
     }
@@ -145,8 +145,7 @@ public class FlowPlatformTest extends PlatformTestCase
 
     FlowStep step = (FlowStep) steps.get( 0 );
 
-    String tracker = ( (HadoopFlowStep) step ).getInitializedConfig( flow.getFlowProcess(), HadoopPlanner.createJobConf( props ) ).get( "mapred.job.tracker" );
-    boolean isLocal = tracker.equalsIgnoreCase( "local" );
+    boolean isLocal = HadoopUtil.isLocal( ( (HadoopFlowStep) step ).getInitializedConfig( flow.getFlowProcess(), HadoopPlanner.createJobConf( props ) ) );
 
     assertTrue( "is local", !isLocal );
     }

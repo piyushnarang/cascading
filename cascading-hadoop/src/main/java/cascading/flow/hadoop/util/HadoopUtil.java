@@ -504,4 +504,25 @@ public class HadoopUtil
 
     return new PlatformInfo( "Hadoop", vendor, version );
     }
+
+  public static boolean isLocal( JobConf conf )
+    {
+    // hadoop 1.0 and 2.0 use different properties to define local mode: we check the new YARN
+    // property first
+    String frameworkName = conf.get( "mapreduce.framework.name" );
+    if ( frameworkName != null )
+      { // we are running on hadoop 2.0 (YARN)
+      return frameworkName.equals( "local" );
+      }
+
+    // hadoop 1.0: use the old property to determine the local mode
+    return conf.get( "mapred.job.tracker" ).equals( "local" );
+    }
+
+  public static void setLocal( JobConf conf )
+    {
+    // set both properties to local
+    conf.set( "mapred.job.tracker", "local" );
+    conf.set( "mapreduce.framework.name", "local" );
+    }
   }

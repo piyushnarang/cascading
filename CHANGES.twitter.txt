@@ -1,5 +1,11 @@
 Cascading Change Log (Twitter)
 
+2.1.6.t3
+
+  In case of job failure, kill only jobs that are not completed (plus some logging enhancements). (sjlee)
+
+  Fixed the isLocal determination so that it works properly with YARN as well as the old hadoop. (sjlee)
+
 2.1.6.t2
 
   HADOOPDEV-124 Updated c.t.h.Hfs to allow for smaller files to be combined into fewer splits, thus fewer map tasks. (sjlee)

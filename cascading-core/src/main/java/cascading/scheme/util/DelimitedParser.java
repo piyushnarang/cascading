@@ -298,9 +298,9 @@ public class DelimitedParser implements Serializable
 
       LOG.warn( message );
 
-      Object[] array = new Object[ Math.max( numValues, split.length ) ];
+      Object[] array = new Object[ numValues ];
       Arrays.fill( array, "" );
-      System.arraycopy( split, 0, array, 0, split.length );
+      System.arraycopy( split, 0, array, 0, Math.min( numValues, split.length ) );
 
       split = array;
       }
@@ -319,9 +319,19 @@ public class DelimitedParser implements Serializable
           }
         catch( Exception exception )
           {
-          String message = "field " + sourceFields.get( i ) + " cannot be coerced from : " + split[ i ] + " to: " + types[ i ].getName();
-
           result[ i ] = null;
+
+          String message;
+          try
+            {
+            message = "field " + sourceFields.get( i ) + " cannot be coerced from : " + split[ i ] + " to: " + types[ i ].getName();
+            }
+          catch( Throwable ignore )
+            {
+            // you may get an exception while composing the message (e.g. ArrayIndexOutOfBoundsException)
+            // use a generic string
+            message = "field cannot be coerced";
+            }
 
           LOG.warn( message, exception );
 

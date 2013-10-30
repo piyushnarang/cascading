@@ -300,7 +300,7 @@ public class DelimitedParser implements Serializable
 
       Object[] array = new Object[ numValues ];
       Arrays.fill( array, "" );
-      System.arraycopy( split, 0, array, 0, numValues );
+      System.arraycopy( split, 0, array, 0, Math.min( numValues, split.length ) );
 
       split = array;
       }

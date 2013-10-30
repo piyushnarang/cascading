@@ -1,5 +1,9 @@
 Cascading Change Log (Twitter)
 
+2.1.6.t4 (unreleased)
+
+  Fixed issue where the number of fields parsed by c.s.u.DelimitedParser were greater than those declared could cause an j.l.ArrayIndexOutOfBoundsException. (sjlee)
+
 2.1.6.t3
 
   In case of job failure, kill only jobs that are not completed (plus some logging enhancements). (sjlee)

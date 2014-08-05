@@ -37,6 +37,7 @@ import cascading.flow.planner.FlowStepJob;
 import cascading.flow.planner.Scope;
 import cascading.property.ConfigDef;
 import cascading.tap.Tap;
+import cascading.tap.hadoop.Hfs;
 import cascading.tap.hadoop.io.MultiInputFormat;
 import cascading.tap.hadoop.util.Hadoop18TapUtil;
 import cascading.tap.hadoop.util.TempHfs;
@@ -57,6 +58,8 @@ import cascading.tuple.io.IndexTuple;
 import cascading.tuple.io.TuplePair;
 import cascading.util.Util;
 import cascading.util.Version;
+import org.apache.hadoop.filecache.DistributedCache;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapred.FileOutputFormat;
 import org.apache.hadoop.mapred.JobConf;
@@ -340,9 +343,14 @@ public class HadoopFlowStep extends BaseFlowStep<JobConf>
       {
       JobConf accumulatedJob = flowProcess.copyConfig( conf );
       tap.sourceConfInit( flowProcess, accumulatedJob );
+      // add distributed cache files to parent
+      conf.set(DistributedCache.CACHE_FILES,
+          accumulatedJob.get(DistributedCache.CACHE_FILES));
       Map<String, String> map = flowProcess.diffConfigIntoMap( conf, accumulatedJob );
       conf.set( "cascading.step.accumulated.source.conf." + Tap.id( tap ), pack( map, conf ) );
       }
+    conf.setClass( Hfs.DistributedCacheFileSystem.DCFS_IMPL,
+        Hfs.DistributedCacheFileSystem.class, FileSystem.class );
 
     MultiInputFormat.addInputFormat( conf, streamedJobs ); //must come last
     }

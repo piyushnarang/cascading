@@ -21,6 +21,7 @@
 package cascading.tap.hadoop;
 
 import java.beans.ConstructorProperties;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -47,9 +48,13 @@ import cascading.tuple.hadoop.TupleSerialization;
 import cascading.util.Util;
 import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.filecache.DistributedCache;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.fs.s3native.NativeS3FileSystem;
 import org.apache.hadoop.mapred.FileInputFormat;
 import org.apache.hadoop.mapred.FileOutputFormat;
@@ -62,6 +67,7 @@ import org.apache.hadoop.mapred.Utils;
 import org.apache.hadoop.mapred.lib.CombineFileInputFormat;
 import org.apache.hadoop.mapred.lib.CombineFileRecordReader;
 import org.apache.hadoop.mapred.lib.CombineFileSplit;
+import org.apache.hadoop.util.Progressable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -127,6 +133,8 @@ public class Hfs extends Tap<JobConf, RecordReader, OutputCollector> implements 
   transient Path path;
   /** Field paths */
   private transient FileStatus[] statuses; // only used by getModifiedTime
+
+  private boolean useDistCache;
 
   /**
    * Method setTemporaryDirectory sets the temporary directory on the given properties object.
@@ -413,7 +421,36 @@ public class Hfs extends Tap<JobConf, RecordReader, OutputCollector> implements 
 
   protected void sourceConfInitAddInputPath( JobConf conf, Path qualifiedPath )
     {
-    FileInputFormat.addInputPath( conf, qualifiedPath );
+    if( useDistCache )
+      {
+      URI uri = qualifiedPath.toUri();
+
+      FileSystem fs;
+      try
+        {
+        fs = FileSystem.get( uri, conf );
+        FileStatus[] stats = fs.listStatus( qualifiedPath );
+        if( stats == null || stats.length == 0 )
+          FileInputFormat.addInputPath( conf, qualifiedPath);
+        else
+          for( FileStatus ifs : stats )
+            {
+            URI cacheUri = fs.makeQualified( ifs.getPath() ).toUri();
+            String cachePathStr = String.format( "%s://%s-%s/%s",
+                DistributedCacheFileSystem.DCFS_SCHEME, cacheUri.getScheme(),
+                cacheUri.getAuthority(), cacheUri.getPath() );
+            FileInputFormat.addInputPath( conf, new Path( cachePathStr ) );
+            DistributedCache.addCacheFile( cacheUri, conf );
+            }
+        }
+      catch( IOException infeasible )
+        {
+        throw new IllegalArgumentException( uri + ": fileSystem failure",
+            infeasible );
+        }
+      }
+    else
+      FileInputFormat.addInputPath( conf, qualifiedPath);
 
     makeLocal( conf, qualifiedPath, "forcing job to local mode, via source: " );
     }
@@ -778,6 +815,141 @@ public class Hfs extends Tap<JobConf, RecordReader, OutputCollector> implements 
     public Configuration getConf()
       {
       return conf;
+      }
+    }
+
+    public Hfs withDistributedCache()
+      {
+      useDistCache = true;
+      return this;
+      }
+
+  /**
+   * FileSystem API to DistributedCache-based Hfs
+   */
+  public static class DistributedCacheFileSystem extends FileSystem
+    {
+    public static final String DCFS_SCHEME = "dcfs";
+    public static final String DCFS_IMPL =
+        String.format( "fs.%s.impl", DCFS_SCHEME );
+
+    @Override
+    public URI getUri()
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public FSDataInputStream open( Path f, int bufferSize )
+        throws IOException
+      {
+      Path[] localFiles = getLocalPaths( f );
+      String cacheFileName = f.getName();
+
+      for( Path p : localFiles )
+        if (cacheFileName.equals( p.getName()) )
+          return FileSystem.getLocal( getConf() ).open(p);
+
+      throw new FileNotFoundException(f + " not found");
+      }
+
+    private Path[] getLocalPaths( Path f ) throws IOException
+      {
+      URI uri = f.toUri();
+
+      if( !DCFS_SCHEME.equals(uri.getScheme()) )
+        throw new IllegalArgumentException( uri + ": dcfs scheme expected" );
+
+      String auth = uri.getAuthority();
+      if( auth == null )
+        throw new IllegalArgumentException( uri + ": No authority" );
+
+      int dashPos = auth.indexOf( "-" );
+      if( dashPos < 0 )
+        throw new IllegalArgumentException( uri + ": No dash in authority" );
+
+      Path[] localFiles = DistributedCache.getLocalCacheFiles( getConf() );
+      if( localFiles == null )
+        throw new FileNotFoundException( "No local cache files" );
+      return localFiles;
+      }
+
+      @Override
+    public FSDataOutputStream create(
+        Path f,
+        FsPermission permission,
+        boolean overwrite,
+        int bufferSize,
+        short replication,
+        long blockSize,
+        Progressable progress)
+        throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public FSDataOutputStream append(
+        Path f,
+        int bufferSize,
+        Progressable progress)
+        throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public boolean rename( Path src, Path dst ) throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public boolean delete( Path f ) throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public boolean delete( Path f, boolean recursive ) throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public FileStatus[] listStatus( Path f ) throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public void setWorkingDirectory( Path new_dir )
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public Path getWorkingDirectory()
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public boolean mkdirs( Path f, FsPermission permission ) throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public FileStatus getFileStatus( Path f ) throws IOException
+      {
+      Path[] localFiles = getLocalPaths( f );
+
+      for( Path p : localFiles )
+        if( f.getName().equals( p.getName() ) )
+          return FileSystem.getLocal( getConf() ).getFileStatus( p );
+
+      throw new FileNotFoundException( f + ": Not found!" );
       }
     }
   }

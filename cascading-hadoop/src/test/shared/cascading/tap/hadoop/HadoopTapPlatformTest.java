@@ -28,14 +28,17 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import cascading.PlatformTestCase;
 import cascading.cascade.Cascade;
 import cascading.cascade.CascadeConnector;
 import cascading.flow.Flow;
+import cascading.flow.FlowElement;
 import cascading.flow.FlowProcess;
 import cascading.flow.hadoop.HadoopFlowProcess;
 import cascading.flow.hadoop.planner.HadoopPlanner;
+import cascading.flow.planner.Scope;
 import cascading.operation.Function;
 import cascading.operation.Identity;
 import cascading.operation.aggregator.Count;
@@ -47,6 +50,8 @@ import cascading.pipe.GroupBy;
 import cascading.pipe.HashJoin;
 import cascading.pipe.Pipe;
 import cascading.platform.hadoop.BaseHadoopPlatform;
+import cascading.property.ConfigDef;
+import cascading.scheme.Scheme;
 import cascading.scheme.SinkCall;
 import cascading.scheme.SourceCall;
 import cascading.scheme.hadoop.TextDelimited;
@@ -54,17 +59,20 @@ import cascading.scheme.hadoop.TextLine;
 import cascading.tap.MultiSourceTap;
 import cascading.tap.SinkMode;
 import cascading.tap.Tap;
+import cascading.tap.hadoop.fs.DistributedCacheFileSystem;
 import cascading.tuple.Fields;
 import cascading.tuple.Tuple;
 import cascading.tuple.TupleEntryCollector;
 import cascading.tuple.TupleEntryIterator;
 import data.InputData;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.mapred.FileInputFormat;
 import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.InputSplit;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.OutputCollector;
 import org.apache.hadoop.mapred.RecordReader;
+import org.apache.hadoop.util.StringUtils;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,6 +85,7 @@ import static data.InputData.*;
 public class HadoopTapPlatformTest extends PlatformTestCase implements Serializable
   {
   private static final Logger LOG = LoggerFactory.getLogger( HadoopTapPlatformTest.class );
+  public static final String NONHFS_INPUT_PATHS = "nonhfs.input.paths";
 
   public HadoopTapPlatformTest()
     {
@@ -511,6 +520,7 @@ public class HadoopTapPlatformTest extends PlatformTestCase implements Serializa
 
     sources.put( "lower", sourceLower );
     sources.put( "upper", sourceUpper );
+    assertTrue("Should be distCacheable!", DistributedCacheFileSystem.distCacheable( sourceUpper) );
 
     Tap sink = getPlatform().getTextFile( new Fields( "line" ), getOutputPath( "dupeconfig" ), SinkMode.REPLACE );
 
@@ -536,6 +546,442 @@ public class HadoopTapPlatformTest extends PlatformTestCase implements Serializa
     }
 
   @Test
+  public void testMultiHfsHashJoin() throws IOException
+    {
+    getPlatform().copyFromLocal( inputFileLower );
+    getPlatform().copyFromLocal( inputFileUpper );
+    getPlatform().copyFromLocal( inputFileUpper2 );
+
+    Tap sourceLower = getPlatform().getTextFile( new Fields( "offset", "line" ), inputFileLower );
+    Tap sourceUpper = getPlatform().getTextFile( new Fields( "offset", "line" ), inputFileUpper );
+    Tap sourceUpper2 = getPlatform().getTextFile( new Fields( "offset", "line" ), inputFileUpper2 );
+    Tap multiTap = new MultiSourceTap(sourceUpper, sourceUpper2);
+
+    Map sources = new HashMap();
+
+    sources.put( "lower", sourceLower );
+    sources.put( "upper", multiTap );
+    assertTrue( "Should be distCacheable!", DistributedCacheFileSystem.distCacheable( multiTap ));
+
+    Tap sink = getPlatform().getTextFile( new Fields( "line" ), getOutputPath( "hashjoin1" ), SinkMode.REPLACE );
+
+    Function splitter = new RegexSplitter( new Fields( "num", "char" ), " " );
+
+    Pipe pipeLower = new Each( new Pipe( "lower" ), new Fields( "line" ), splitter );
+    Pipe pipeUpper = new Each( new Pipe( "upper" ), new Fields( "line" ), splitter );
+
+    Pipe splice = new HashJoin( pipeLower, new Fields( "num" ), pipeUpper, new Fields( "num" ), Fields.size( 4 ) );
+
+    Map<Object, Object> properties = getProperties();
+
+    Flow flow = getPlatform().getFlowConnector( properties ).connect( sources, sink, splice );
+
+    flow.complete();
+
+    validateLength( flow, 6 );
+
+    List<Tuple> values = getSinkAsList( flow );
+
+    assertTrue( values.contains( new Tuple( "1\ta\t1\tA" ) ) );
+    assertTrue( values.contains( new Tuple( "2\tb\t2\tB" ) ) );
+    assertTrue( values.contains( new Tuple( "3\tc\t3\tC" ) ) );
+    assertTrue( values.contains( new Tuple( "4\td\t4\tD" ) ) );
+    assertTrue( values.contains( new Tuple( "5\te\t5\tE" ) ) );
+    assertTrue( values.contains( new Tuple( "5\te\t5\tF" ) ) );
+    }
+
+  @Test
+  public void testGlobHfsHashJoin() throws IOException
+    {
+    getPlatform().copyFromLocal( inputFileLower );
+    getPlatform().copyFromLocal( inputFileUpper );
+    getPlatform().copyFromLocal( inputFileUpper2 );
+
+    Tap sourceLower = getPlatform().getTextFile( new Fields( "offset", "line" ), inputFileLower );
+    Tap sourceUpper = new GlobHfs(new TextLine(new Fields( "offset", "line" ), Fields.ALL),
+        inputPath + "{upper.txt,upper2.txt}");
+
+    Map sources = new HashMap();
+
+    sources.put( "lower", sourceLower );
+    sources.put( "upper", sourceUpper );
+    assertTrue( "Should be distCacheable!", DistributedCacheFileSystem.distCacheable( sourceUpper ));
+
+    Tap sink = getPlatform().getTextFile( new Fields( "line" ), getOutputPath( "hashjoin2" ), SinkMode.REPLACE );
+
+    Function splitter = new RegexSplitter( new Fields( "num", "char" ), " " );
+
+    Pipe pipeLower = new Each( new Pipe( "lower" ), new Fields( "line" ), splitter );
+    Pipe pipeUpper = new Each( new Pipe( "upper" ), new Fields( "line" ), splitter );
+
+    Pipe splice = new HashJoin( pipeLower, new Fields( "num" ), pipeUpper, new Fields( "num" ), Fields.size( 4 ) );
+
+    Map<Object, Object> properties = getProperties();
+
+    Flow flow = getPlatform().getFlowConnector( properties ).connect( sources, sink, splice );
+
+    flow.complete();
+
+    validateLength( flow, 6 );
+
+    List<Tuple> values = getSinkAsList( flow );
+
+    assertTrue( values.contains( new Tuple( "1\ta\t1\tA" ) ) );
+    assertTrue( values.contains( new Tuple( "2\tb\t2\tB" ) ) );
+    assertTrue( values.contains( new Tuple( "3\tc\t3\tC" ) ) );
+    assertTrue( values.contains( new Tuple( "4\td\t4\tD" ) ) );
+    assertTrue( values.contains( new Tuple( "5\te\t5\tE" ) ) );
+    assertTrue( values.contains( new Tuple( "5\te\t5\tF" ) ) );
+    }
+
+  @Test
+  public void testMultiGlobHfsHashJoin() throws IOException
+    {
+    getPlatform().copyFromLocal( inputFileLower );
+    getPlatform().copyFromLocal( inputFileUpper );
+    getPlatform().copyFromLocal( inputFileUpper2 );
+    getPlatform().copyFromLocal( inputFileUpper3 );
+
+
+    Tap sourceLower = getPlatform().getTextFile( new Fields( "offset", "line" ), inputFileLower );
+    Tap sourceUpper12 = new GlobHfs(new TextLine(new Fields( "offset", "line" ), Fields.ALL),
+        inputPath + "{upper.txt,upper2.txt}");
+    Tap sourceUpper3 = new GlobHfs(new TextLine(new Fields( "offset", "line" ), Fields.ALL),
+        inputPath + "up?er3.txt");
+    Tap multiTap = new MultiSourceTap( sourceUpper12, sourceUpper3 );
+
+    Map sources = new HashMap();
+
+    sources.put( "lower", sourceLower );
+    sources.put( "upper", multiTap );
+    assertTrue( "Should be distCacheable!", DistributedCacheFileSystem.distCacheable( multiTap ));
+
+    Tap sink = getPlatform().getTextFile( new Fields( "line" ), getOutputPath( "hashjoin3" ), SinkMode.REPLACE );
+
+    Function splitter = new RegexSplitter( new Fields( "num", "char" ), " " );
+
+    Pipe pipeLower = new Each( new Pipe( "lower" ), new Fields( "line" ), splitter );
+    Pipe pipeUpper = new Each( new Pipe( "upper" ), new Fields( "line" ), splitter );
+
+    Pipe splice = new HashJoin( pipeLower, new Fields( "num" ), pipeUpper, new Fields( "num" ), Fields.size( 4 ) );
+
+    Map<Object, Object> properties = getProperties();
+
+    Flow flow = getPlatform().getFlowConnector( properties ).connect( sources, sink, splice );
+
+    flow.complete();
+
+    validateLength( flow, 7 );
+
+    List<Tuple> values = getSinkAsList( flow );
+
+    assertTrue( values.contains( new Tuple( "1\ta\t1\tA" ) ) );
+    assertTrue( values.contains( new Tuple( "2\tb\t2\tB" ) ) );
+    assertTrue( values.contains( new Tuple( "3\tc\t3\tC" ) ) );
+    assertTrue( values.contains( new Tuple( "4\td\t4\tD" ) ) );
+    assertTrue( values.contains( new Tuple( "5\te\t5\tE" ) ) );
+    assertTrue( values.contains( new Tuple( "5\te\t5\tF" ) ) );
+    assertTrue( values.contains( new Tuple( "5\te\t5\tG" ) ) );
+    }
+
+  // Not extending Hfs to make it uncacheable
+  public class NonHfs extends Tap<JobConf,RecordReader,OutputCollector>
+    {
+    private final Tap<JobConf,RecordReader,OutputCollector> realTap;
+
+    public NonHfs( Tap<JobConf,RecordReader,OutputCollector> realTap )
+      {
+      this.realTap = realTap;
+      }
+
+    @Override
+    public Scheme<JobConf,RecordReader,OutputCollector,?,?> getScheme()
+      {
+      return realTap.getScheme();
+      }
+
+    @Override
+    public String getTrace()
+      {
+      return realTap.getTrace();
+      }
+
+    @Override
+    public void flowConfInit( Flow<JobConf> flow )
+      {
+      realTap.flowConfInit(flow);
+      }
+
+    @Override
+    public void sourceConfInit( FlowProcess<JobConf> flowProcess, JobConf conf )
+      {
+      String[] oldVal = StringUtils.getStrings( NONHFS_INPUT_PATHS );
+      if (oldVal != null)
+        {
+        FileInputFormat.setInputPaths( conf, StringUtils.arrayToString( oldVal ) );
+        }
+      realTap.sourceConfInit( flowProcess, conf );
+      conf.setStrings( NONHFS_INPUT_PATHS,
+          StringUtils.getStrings( "mapreduce.input.fileinputformat.inputdir" ) );
+      // make it break the DistCacheFS
+      FileInputFormat.setInputPaths( conf, "nonhfs:///nonsense/path" );
+      }
+
+    @Override
+    public void sinkConfInit( FlowProcess<JobConf> flowProcess, JobConf conf )
+      {
+      realTap.sinkConfInit( flowProcess, conf );
+      }
+
+    @Override
+    public String getIdentifier()
+      {
+      return realTap.getIdentifier();
+      }
+
+    @Override
+    public Fields getSourceFields()
+      {
+      return realTap.getSourceFields();
+      }
+
+    @Override
+    public Fields getSinkFields()
+      {
+      return realTap.getSinkFields();
+      }
+
+    @Override
+    public TupleEntryIterator openForRead( FlowProcess<JobConf> flowProcess, RecordReader input ) throws IOException
+      {
+      return realTap.openForRead( flowProcess, input );
+      }
+
+    @Override
+    public TupleEntryCollector openForWrite( FlowProcess<JobConf> flowProcess, OutputCollector output )
+        throws IOException
+      {
+      return realTap.openForWrite( flowProcess, output );
+      }
+
+    @Override
+    public Scope outgoingScopeFor( Set<Scope> incomingScopes )
+      {
+      return realTap.outgoingScopeFor( incomingScopes );
+      }
+
+    @Override
+    public Fields retrieveSourceFields( FlowProcess<JobConf> flowProcess )
+      {
+      return realTap.retrieveSourceFields( flowProcess );
+      }
+
+    @Override
+    public void presentSourceFields( FlowProcess<JobConf> flowProcess, Fields fields )
+      {
+      realTap.presentSourceFields( flowProcess, fields );
+      }
+
+    @Override
+    public Fields retrieveSinkFields( FlowProcess<JobConf> flowProcess )
+      {
+      return realTap.retrieveSinkFields( flowProcess );
+      }
+
+    @Override
+    public void presentSinkFields( FlowProcess<JobConf> flowProcess, Fields fields )
+      {
+      realTap.presentSinkFields( flowProcess, fields );
+      }
+
+    @Override
+    public Fields resolveIncomingOperationArgumentFields( Scope incomingScope )
+      {
+      return realTap.resolveIncomingOperationArgumentFields( incomingScope );
+      }
+
+    @Override
+    public Fields resolveIncomingOperationPassThroughFields( Scope incomingScope )
+      {
+      return realTap.resolveIncomingOperationPassThroughFields( incomingScope );
+      }
+
+    @Override
+    public String getFullIdentifier( FlowProcess<JobConf> flowProcess )
+      {
+      return realTap.getFullIdentifier( flowProcess );
+      }
+
+    @Override
+    public String getFullIdentifier( JobConf conf )
+      {
+      return realTap.getFullIdentifier( conf );
+      }
+
+    @Override
+    public boolean createResource( FlowProcess<JobConf> flowProcess ) throws IOException
+      {
+      return realTap.createResource( flowProcess );
+      }
+
+    @Override
+    public boolean createResource( JobConf conf ) throws IOException
+      {
+      return realTap.createResource(conf);
+      }
+
+    @Override
+    public boolean deleteResource( FlowProcess<JobConf> flowProcess ) throws IOException
+      {
+      return realTap.deleteResource( flowProcess );
+      }
+
+    @Override
+    public boolean deleteResource( JobConf conf ) throws IOException
+      {
+      return realTap.deleteResource( conf );
+      }
+
+    @Override
+    public boolean commitResource( JobConf conf ) throws IOException
+      {
+      return realTap.commitResource( conf );
+      }
+
+    @Override
+    public boolean rollbackResource( JobConf conf ) throws IOException
+      {
+      return realTap.rollbackResource( conf );
+      }
+
+    @Override
+    public boolean resourceExists( JobConf conf ) throws IOException
+      {
+      return realTap.resourceExists( conf );
+      }
+
+    @Override
+    public long getModifiedTime( JobConf conf ) throws IOException
+      {
+      return realTap.getModifiedTime( conf );
+      }
+
+    @Override
+    public cascading.tap.SinkMode getSinkMode()
+      {
+      return realTap.getSinkMode();
+      }
+
+    @Override
+    public boolean isKeep()
+      {
+      return realTap.isKeep();
+      }
+
+    @Override
+    public boolean isReplace()
+      {
+      return realTap.isReplace();
+      }
+
+    @Override
+    public boolean isUpdate()
+      {
+      return realTap.isUpdate();
+      }
+
+    @Override
+    public boolean isSink()
+      {
+      return realTap.isSink();
+      }
+
+    @Override
+    public boolean isSource()
+      {
+      return realTap.isSource();
+      }
+
+    @Override
+    public boolean isTemporary()
+      {
+      return realTap.isTemporary();
+      }
+
+    @Override
+    public ConfigDef getConfigDef()
+      {
+      return realTap.getConfigDef();
+      }
+
+    @Override
+    public boolean hasConfigDef()
+      {
+      return realTap.hasConfigDef();
+      }
+
+    @Override
+    public ConfigDef getStepConfigDef()
+      {
+      return realTap.getStepConfigDef();
+      }
+
+    @Override
+    public boolean hasStepConfigDef()
+      {
+      return realTap.hasStepConfigDef();
+      }
+
+    @Override
+    public boolean isEquivalentTo(FlowElement element)
+      {
+      return realTap.isEquivalentTo(element);
+      }
+    }
+
+  // FakeHfs HashJoin should not use CDCFS optimization
+  @Test
+  public void testMultiFakeHfsHashJoin() throws IOException
+    {
+    getPlatform().copyFromLocal( inputFileLower );
+    getPlatform().copyFromLocal( inputFileUpper );
+
+    Tap sourceLower = getPlatform().getTextFile( new Fields("offset", "line"), inputFileLower );
+    Tap sourceUpper = getPlatform().getTextFile( new Fields( "offset", "line" ), inputFileUpper );
+    Tap nonhfsUpper = new NonHfs( sourceUpper );
+
+    Map sources = new HashMap();
+
+    sources.put( "lower", sourceLower );
+    sources.put( "upper", nonhfsUpper );
+    assertTrue( !DistributedCacheFileSystem.distCacheable( nonhfsUpper ));
+
+    Tap sink = getPlatform().getTextFile( new Fields( "line" ), getOutputPath( "hashjoin4" ), SinkMode.REPLACE );
+
+    Function splitter = new RegexSplitter( new Fields( "num", "char" ), " " );
+
+    Pipe pipeLower = new Each( new Pipe( "lower" ), new Fields( "line" ), splitter );
+    Pipe pipeUpper = new Each( new Pipe( "upper" ), new Fields( "line" ), splitter );
+
+    Pipe splice = new HashJoin( pipeLower, new Fields( "num" ), pipeUpper, new Fields( "num" ), Fields.size( 4 ) );
+
+    Map<Object, Object> properties = getProperties();
+
+    Flow flow = getPlatform().getFlowConnector( properties ).connect(sources, sink, splice);
+
+    flow.complete();
+
+    validateLength( flow, 5 );
+
+    List<Tuple> values = getSinkAsList( flow );
+
+    assertTrue( values.contains( new Tuple( "1\ta\t1\tA" ) ) );
+    assertTrue( values.contains( new Tuple( "2\tb\t2\tB" ) ) );
+    assertTrue( values.contains( new Tuple( "3\tc\t3\tC" ) ) );
+    assertTrue( values.contains( new Tuple( "4\td\t4\tD" ) ) );
+    assertTrue( values.contains( new Tuple( "5\te\t5\tE" ) ) );
+    }
+
   public void testCombinedHfs() throws Exception
     {
     getPlatform().copyFromLocal( inputFileLower );

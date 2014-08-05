@@ -29,6 +29,7 @@ import cascading.management.state.ClientState;
 import cascading.stats.FlowStepStats;
 import cascading.stats.hadoop.BaseHadoopStepStats;
 import cascading.stats.hadoop.HadoopStepStats;
+import cascading.tap.hadoop.fs.DistributedCacheFileSystem;
 import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.JobStatus;
@@ -104,6 +105,7 @@ public class HadoopFlowStepJob extends FlowStepJob<JobConf>
 
   protected void internalNonBlockingStart() throws IOException
     {
+    DistributedCacheFileSystem.populateDistCache( flowStep.getSources(), currentConf );
     jobClient = new JobClient( currentConf );
     runningJob = jobClient.submitJob( currentConf );
 

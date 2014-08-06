@@ -20,13 +20,10 @@
 
 package cascading.flow.hadoop;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Set;
+import java.net.URI;
+import java.util.*;
 
 import cascading.flow.FlowException;
 import cascading.flow.FlowProcess;
@@ -37,7 +34,6 @@ import cascading.flow.planner.FlowStepJob;
 import cascading.flow.planner.Scope;
 import cascading.property.ConfigDef;
 import cascading.tap.Tap;
-import cascading.tap.hadoop.Hfs;
 import cascading.tap.hadoop.io.MultiInputFormat;
 import cascading.tap.hadoop.util.Hadoop18TapUtil;
 import cascading.tap.hadoop.util.TempHfs;
@@ -59,10 +55,16 @@ import cascading.tuple.io.TuplePair;
 import cascading.util.Util;
 import cascading.util.Version;
 import org.apache.hadoop.filecache.DistributedCache;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.mapred.FileInputFormat;
 import org.apache.hadoop.mapred.FileOutputFormat;
 import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.util.Progressable;
 
 import static cascading.flow.hadoop.util.HadoopUtil.serializeBase64;
 import static cascading.flow.hadoop.util.HadoopUtil.writeStateToDistCache;
@@ -343,14 +345,13 @@ public class HadoopFlowStep extends BaseFlowStep<JobConf>
       {
       JobConf accumulatedJob = flowProcess.copyConfig( conf );
       tap.sourceConfInit( flowProcess, accumulatedJob );
-      // add distributed cache files to parent
-      conf.set(DistributedCache.CACHE_FILES,
-          accumulatedJob.get(DistributedCache.CACHE_FILES));
+
+      if( !HadoopUtil.isLocal( accumulatedJob ))
+        distCacheInputs( accumulatedJob, conf );
+
       Map<String, String> map = flowProcess.diffConfigIntoMap( conf, accumulatedJob );
       conf.set( "cascading.step.accumulated.source.conf." + Tap.id( tap ), pack( map, conf ) );
       }
-    conf.setClass( Hfs.DistributedCacheFileSystem.DCFS_IMPL,
-        Hfs.DistributedCacheFileSystem.class, FileSystem.class );
 
     MultiInputFormat.addInputFormat( conf, streamedJobs ); //must come last
     }
@@ -485,5 +486,181 @@ public class HadoopFlowStep extends BaseFlowStep<JobConf>
   public Tap getReducerTrap( String name )
     {
     return getReducerTraps().get( name );
+    }
+
+  private static void distCacheInputs( JobConf accumulatedConf, JobConf stepConf )
+    {
+    Path[] origPaths = FileInputFormat.getInputPaths( accumulatedConf );
+    List<Path> cacheInput = new ArrayList<Path>( origPaths.length );
+    for( Path p : origPaths )
+      {
+      URI uri = p.toUri();
+      FileSystem fs;
+      try
+        {
+        fs = FileSystem.get( uri, accumulatedConf );
+        FileStatus[] stats = fs.listStatus( p );
+        if( stats == null || stats.length == 0 )
+          cacheInput.add(p);
+        else
+          for( FileStatus ifs : stats )
+            {
+            if( ifs.isDir() )
+              continue;
+            URI cacheUri = fs.makeQualified( ifs.getPath() ).toUri();
+            String cachePathStr = String.format( "%s://%s-%s/%s",
+                DistributedCacheFileSystem.DCFS_SCHEME, cacheUri.getScheme(),
+                cacheUri.getAuthority(), cacheUri.getPath() );
+            cacheInput.add( new Path( cachePathStr ) );
+            DistributedCache.addCacheFile( cacheUri, stepConf );
+            }
+        }
+      catch( IOException infeasible )
+        {
+        throw new IllegalArgumentException( uri + ": fileSystem failure",
+            infeasible );
+        }
+      }
+    FileInputFormat.setInputPaths(accumulatedConf, cacheInput.toArray(new Path[cacheInput.size()]));
+    accumulatedConf.setClass(DistributedCacheFileSystem.DCFS_IMPL,
+        DistributedCacheFileSystem.class, FileSystem.class);
+    }
+  /**
+   * FileSystem API to DistributedCache-based Hfs
+   */
+  public static class DistributedCacheFileSystem extends FileSystem
+    {
+    public static final String DCFS_SCHEME = "cascadingdcfs";
+    public static final String DCFS_IMPL =
+        String.format( "fs.%s.impl", DCFS_SCHEME );
+
+    @Override
+    public URI getUri()
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public FSDataInputStream open( Path f, int bufferSize )
+        throws IOException
+      {
+      Path[] localFiles = getLocalPaths( f );
+      String cacheFileName = f.getName();
+
+      if( LOG.isDebugEnabled() )
+        {
+        LOG.debug("Open: Checking dist cache " + Arrays.toString(localFiles) + " for : " + f );
+        }
+
+      for( Path p : localFiles )
+        if (cacheFileName.equals( p.getName()) )
+          return FileSystem.getLocal( getConf() ).open(p);
+
+      throw new FileNotFoundException(f + " not found");
+      }
+
+    private Path[] getLocalPaths( Path f ) throws IOException
+      {
+      URI uri = f.toUri();
+
+      if( !DCFS_SCHEME.equals(uri.getScheme()) )
+        throw new IllegalArgumentException( uri + ": dcfs scheme expected" );
+
+      String auth = uri.getAuthority();
+      if( auth == null )
+        throw new IllegalArgumentException( uri + ": No authority" );
+
+      int dashPos = auth.indexOf( "-" );
+      if( dashPos < 0 )
+        throw new IllegalArgumentException( uri + ": No dash in authority" );
+
+      Path[] localFiles = DistributedCache.getLocalCacheFiles( getConf() );
+      if( localFiles == null )
+        throw new FileNotFoundException( "No local cache files" );
+      return localFiles;
+      }
+
+    @Override
+    public FSDataOutputStream create(
+      Path f,
+      FsPermission permission,
+      boolean overwrite,
+      int bufferSize,
+      short replication,
+      long blockSize,
+      Progressable progress)
+      throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public FSDataOutputStream append(
+      Path f,
+      int bufferSize,
+      Progressable progress )
+      throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public boolean rename( Path src, Path dst ) throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public boolean delete( Path f ) throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public boolean delete( Path f, boolean recursive ) throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public FileStatus[] listStatus( Path f ) throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public void setWorkingDirectory( Path new_dir )
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public Path getWorkingDirectory()
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public boolean mkdirs( Path f, FsPermission permission ) throws IOException
+      {
+      throw new UnsupportedOperationException();
+      }
+
+    @Override
+    public FileStatus getFileStatus( Path f ) throws IOException
+      {
+      Path[] localFiles = getLocalPaths( f );
+
+      if( LOG.isDebugEnabled() )
+        {
+        LOG.debug("GetFileStauts: Checking dist cache " + Arrays.toString(localFiles) + " for : " + f );
+        }
+
+      for( Path p : localFiles )
+        if( f.getName().equals( p.getName() ) )
+          return FileSystem.getLocal( getConf() ).getFileStatus( p );
+
+      throw new FileNotFoundException( f + ": Not found!" );
+      }
     }
   }

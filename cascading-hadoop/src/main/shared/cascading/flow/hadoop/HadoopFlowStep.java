@@ -23,6 +23,7 @@ package cascading.flow.hadoop;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.*;
 
 import cascading.flow.FlowException;
@@ -55,11 +56,7 @@ import cascading.tuple.io.TuplePair;
 import cascading.util.Util;
 import cascading.util.Version;
 import org.apache.hadoop.filecache.DistributedCache;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FSDataOutputStream;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.mapred.FileInputFormat;
 import org.apache.hadoop.mapred.FileOutputFormat;
@@ -347,7 +344,7 @@ public class HadoopFlowStep extends BaseFlowStep<JobConf>
       tap.sourceConfInit( flowProcess, accumulatedJob );
 
       if( !HadoopUtil.isLocal( accumulatedJob ))
-        distCacheInputs( accumulatedJob, conf );
+        distCacheHashJoinInputs(tap, accumulatedJob, conf);
 
       Map<String, String> map = flowProcess.diffConfigIntoMap( conf, accumulatedJob );
       conf.set( "cascading.step.accumulated.source.conf." + Tap.id( tap ), pack( map, conf ) );
@@ -488,8 +485,9 @@ public class HadoopFlowStep extends BaseFlowStep<JobConf>
     return getReducerTraps().get( name );
     }
 
-  private static void distCacheInputs( JobConf accumulatedConf, JobConf stepConf )
+  private static void distCacheHashJoinInputs(Tap tap, JobConf accumulatedConf, JobConf stepConf)
     {
+    String tapHashPrefix = "hashjointap" + tap.getIdentifier().hashCode();
     Path[] origPaths = FileInputFormat.getInputPaths( accumulatedConf );
     List<Path> cacheInput = new ArrayList<Path>( origPaths.length );
     for( Path p : origPaths )
@@ -507,17 +505,31 @@ public class HadoopFlowStep extends BaseFlowStep<JobConf>
             {
             if( ifs.isDir() )
               continue;
-            URI cacheUri = fs.makeQualified( ifs.getPath() ).toUri();
-            String cachePathStr = String.format( "%s://%s-%s/%s",
-                DistributedCacheFileSystem.DCFS_SCHEME, cacheUri.getScheme(),
-                cacheUri.getAuthority(), cacheUri.getPath() );
-            cacheInput.add( new Path( cachePathStr ) );
+
+            // hdfs://<host>/<path>#hashjointapNNNN-UUID
+            String cacheUriStr = String.format("%s#%s-%s",
+                fs.makeQualified( ifs.getPath() ).toString(),
+                tapHashPrefix,
+                Util.createUniqueID() );
+
+            URI cacheUri = new URI(cacheUriStr);
+            cacheInput.add( new Path( DistributedCacheFileSystem.DCFS_ROOT + cacheUri.getFragment()) );
             DistributedCache.addCacheFile( cacheUri, stepConf );
             }
+        }
+      catch( FileNotFoundException fnf)
+        {
+        // intermediate step will be handled later
+        return;
         }
       catch( IOException infeasible )
         {
         throw new IllegalArgumentException( uri + ": fileSystem failure",
+            infeasible );
+        }
+      catch (URISyntaxException infeasible)
+        {
+        throw new IllegalArgumentException( uri + ": URI formation failure",
             infeasible );
         }
       }
@@ -534,50 +546,24 @@ public class HadoopFlowStep extends BaseFlowStep<JobConf>
     public static final String DCFS_IMPL =
         String.format( "fs.%s.impl", DCFS_SCHEME );
 
+    private static final Path DCFS_ROOT = new Path( DCFS_SCHEME + ":///" );
+
     @Override
     public URI getUri()
       {
-      throw new UnsupportedOperationException();
+      return DCFS_ROOT.toUri();
       }
 
     @Override
     public FSDataInputStream open( Path f, int bufferSize )
         throws IOException
       {
-      Path[] localFiles = getLocalPaths( f );
-      String cacheFileName = f.getName();
-
-      if( LOG.isDebugEnabled() )
-        {
-        LOG.debug("Open: Checking dist cache " + Arrays.toString(localFiles) + " for : " + f );
-        }
-
-      for( Path p : localFiles )
-        if (cacheFileName.equals( p.getName()) )
-          return FileSystem.getLocal( getConf() ).open(p);
-
-      throw new FileNotFoundException(f + " not found");
-      }
-
-    private Path[] getLocalPaths( Path f ) throws IOException
-      {
-      URI uri = f.toUri();
-
-      if( !DCFS_SCHEME.equals(uri.getScheme()) )
-        throw new IllegalArgumentException( uri + ": dcfs scheme expected" );
-
-      String auth = uri.getAuthority();
-      if( auth == null )
-        throw new IllegalArgumentException( uri + ": No authority" );
-
-      int dashPos = auth.indexOf( "-" );
-      if( dashPos < 0 )
-        throw new IllegalArgumentException( uri + ": No dash in authority" );
-
-      Path[] localFiles = DistributedCache.getLocalCacheFiles( getConf() );
-      if( localFiles == null )
-        throw new FileNotFoundException( "No local cache files" );
-      return localFiles;
+      Path qualifiedPath = makeQualified( f );
+      Path localPath = getLocalPath( qualifiedPath );
+      if (localPath == null)
+        throw new FileNotFoundException( qualifiedPath + ": not found." );
+      else
+        return FileSystem.getLocal( getConf() ).open( localPath );
       }
 
     @Override
@@ -622,22 +608,45 @@ public class HadoopFlowStep extends BaseFlowStep<JobConf>
       throw new UnsupportedOperationException();
       }
 
+    /**
+     * If f is a cached file, return local file status, otherwise empty array
+     * if f is the root dif, return all cached file statuses
+     *
+     * @param f
+     * @return array of file statuses
+     * @throws IOException
+     */
     @Override
     public FileStatus[] listStatus( Path f ) throws IOException
       {
-      throw new UnsupportedOperationException();
+      Path qualifiedPath = makeQualified( f );
+      if( qualifiedPath.getParent() == null )
+        {
+        Path[] localPaths = DistributedCache.getLocalCacheFiles( getConf() );
+        if (localPaths == null && localPaths.length == 0)
+          return new FileStatus[0];
+
+        FileSystem lfs = FileSystem.getLocal( getConf() );
+        FileStatus[] stats = new FileStatus[ localPaths.length ];
+        for (int i = 0; i < localPaths.length; i++)
+          stats[i] = lfs.getFileStatus( localPaths[ i ] );
+        return stats;
+        }
+      else
+        return new FileStatus[] { getFileStatus( qualifiedPath ) };
       }
 
     @Override
     public void setWorkingDirectory( Path new_dir )
       {
-      throw new UnsupportedOperationException();
+      if( makeQualified(new_dir).getParent() != null )
+        throw new UnsupportedOperationException();
       }
 
     @Override
     public Path getWorkingDirectory()
       {
-      throw new UnsupportedOperationException();
+      return DCFS_ROOT;
       }
 
     @Override
@@ -649,18 +658,37 @@ public class HadoopFlowStep extends BaseFlowStep<JobConf>
     @Override
     public FileStatus getFileStatus( Path f ) throws IOException
       {
-      Path[] localFiles = getLocalPaths( f );
+      Path qualifiedPath = makeQualified(f);
 
-      if( LOG.isDebugEnabled() )
+      if( qualifiedPath.getParent() == null )
         {
-        LOG.debug("GetFileStauts: Checking dist cache " + Arrays.toString(localFiles) + " for : " + f );
+        // long length, boolean isdir, int block_replication,
+        // long blocksize, long modification_time, Path path
+        return new FileStatus( 0, true, 0, 0, 0, qualifiedPath );
         }
 
-      for( Path p : localFiles )
-        if( f.getName().equals( p.getName() ) )
-          return FileSystem.getLocal( getConf() ).getFileStatus( p );
+      Path localPath = getLocalPath( qualifiedPath );
 
-      throw new FileNotFoundException( f + ": Not found!" );
+      if( localPath == null )
+        throw new FileNotFoundException( qualifiedPath + ": not found." );
+      else
+        return FileSystem.getLocal(getConf()).getFileStatus( localPath );
+
+      }
+
+    private Path getLocalPath( Path p ) throws IOException
+      {
+      Path[] localPaths = DistributedCache.getLocalCacheFiles( getConf() );
+
+      if( LOG.isDebugEnabled() )
+        LOG.debug("getLocalPath: Checking dist cache " + Arrays.toString(localPaths) + " for : " + p );
+
+      if( localPaths != null )
+        for( Path lp : localPaths )
+          if( p.getName().equals(lp.getName()) )
+            return lp;
+
+      return null;
       }
     }
   }

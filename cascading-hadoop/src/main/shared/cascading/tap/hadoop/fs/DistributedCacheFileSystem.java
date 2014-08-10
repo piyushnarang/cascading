@@ -46,7 +46,24 @@ import java.util.Collection;
 import java.util.regex.Pattern;
 
 /**
- * FileSystem API to DistributedCache-based Tap
+ * FileSystem API to DistributedCache-based Tap.
+ * Since DistributedCache symlinks all files into container's working dir
+ * only 1-level path nesting is supported.
+ *
+ * A cached URI has the form:
+ *  &lt;scheme&gt;://&lt;authority&gt;/&lt;path&gt;#&lt;tapId&gt;-&lt;cdcfs&gt;-&lt;linkuuid&gt;
+ *
+ * DCFS recognizes the following paths:
+ * <ol>
+ *  <li>cdcfs:///&lt;tapId&gt;-&lt;cdcfs&gt;-&lt;linkuuid&gt; - treated as a file.</li>
+ *  <li>cdcfs:///&lt;tapId&gt; - treated as directory if a &lt;tapId&gt;-&lt;cdcfs&gt;-&lt;linkuuid&gt; exists
+ *    <ul>
+ *      <li>listStatus returns an array of the corresponding RLFS FileStaus objects</li>
+ *      <li>getFileStatus returns a virtual directory file status</li>
+ *    </ul>
+ *  </li>
+ * </ol>
+ *
  */
 public class DistributedCacheFileSystem extends FilterFileSystem
   {
@@ -192,6 +209,18 @@ public class DistributedCacheFileSystem extends FilterFileSystem
     return DCFS_ROOT.toUri();
     }
 
+  /**
+   * Open is provided only for completeness and debugging. MapReduce will not
+   * normally use it. The flow in MR is to call IF.getSplits which in turn for
+   * file-based IF boils down to getting/listing FileStatus'es of via FS.
+   * This file system will delegate these calls to RawLocalFileSystem. Hence,
+   * the subsequent open calls on splits will be made against RLFS.
+   *
+   * @param f
+   * @param bufferSize
+   * @return
+   * @throws IOException
+   */
   @Override
   public FSDataInputStream open( Path f, int bufferSize ) throws IOException
     {
@@ -199,21 +228,19 @@ public class DistributedCacheFileSystem extends FilterFileSystem
       return fs.open( f );
 
     Path qualifiedPath = makeQualified( f );
-    if( qualifiedPath.getParent() == null )
-      throw new FileNotFoundException( f + ": root dir" );
-
-    if( qualifiedPath.getParent().getParent() == null )
+    if( qualifiedPath.getParent() != null && qualifiedPath.getParent().getParent() == null )
       {
       String pathName = qualifiedPath.getName();
-      if( FILE_PATTERN.matcher(pathName).matches() )
+      if( FILE_PATTERN.matcher( pathName ).matches() )
         {
         Path[] localPaths = checkEmptyDistCache( qualifiedPath );
         for( Path localFile : localPaths )
           if( pathName.equals( localFile.getName() ) )
-            fs.open( localFile );
+            return fs.open( localFile );
         }
       }
-      throw new FileNotFoundException( f + ": not found." );
+
+    throw new FileNotFoundException( f + ": not found." );
     }
 
   private boolean shouldDelegate( Path f )

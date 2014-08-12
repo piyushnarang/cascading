@@ -21,7 +21,12 @@
 package cascading.flow.hadoop;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
 
 import cascading.flow.FlowException;
 import cascading.flow.FlowProcess;
@@ -53,7 +58,7 @@ import cascading.tuple.io.IndexTuple;
 import cascading.tuple.io.TuplePair;
 import cascading.util.Util;
 import cascading.util.Version;
-import org.apache.hadoop.fs.*;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapred.FileOutputFormat;
 import org.apache.hadoop.mapred.JobConf;
 

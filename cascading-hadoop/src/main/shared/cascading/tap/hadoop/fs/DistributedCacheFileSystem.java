@@ -24,12 +24,12 @@ import cascading.tap.Tap;
 import cascading.util.Util;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.filecache.DistributedCache;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.FilterFileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RawLocalFileSystem;
 import org.apache.hadoop.fs.permission.FsPermission;
@@ -65,9 +65,9 @@ import java.util.regex.Pattern;
  * </ol>
  *
  */
-public class DistributedCacheFileSystem extends FilterFileSystem
+public class DistributedCacheFileSystem extends FileSystem
   {
-  private static final Log LOG = LogFactory.getLog(DistributedCacheFileSystem.class);
+  private static final Log LOG = LogFactory.getLog( DistributedCacheFileSystem.class );
   public static final String DCFS_SCHEME = "cdcfs"; // cascading distributed cache file system
   public static final String DCFS_IMPL = String.format( "fs.%s.impl", DCFS_SCHEME );
 
@@ -85,10 +85,12 @@ public class DistributedCacheFileSystem extends FilterFileSystem
   public static class ReadOnlyFileSystem extends UnsupportedOperationException
     {}
 
+  private final FileSystem fs;
+
   /**
    * A helpler to access protected FIF.listStatus
    */
-  private static class FIFHelper extends FileInputFormat {
+  private static class FIFListStatusHelper extends FileInputFormat {
     @Override
     public RecordReader getRecordReader(InputSplit split, JobConf job, Reporter reporter) throws IOException
       {
@@ -103,7 +105,8 @@ public class DistributedCacheFileSystem extends FilterFileSystem
 
   public DistributedCacheFileSystem()
     {
-    super(new RawLocalFileSystem());
+    super();
+    fs = new RawLocalFileSystem();
     }
 
 
@@ -155,7 +158,7 @@ public class DistributedCacheFileSystem extends FilterFileSystem
   public static void populateDistCache(Collection<Tap> sourceTaps, JobConf currentConf) throws IOException
     {
     URI[] cachedUris = DistributedCache.getCacheFiles( currentConf );
-    FIFHelper fifHelper = new FIFHelper();
+    FIFListStatusHelper fifHelper = new FIFListStatusHelper();
     JobConf fifConf = new JobConf( currentConf );
 
     tap_loop: for( Tap tap : sourceTaps )
@@ -201,6 +204,13 @@ public class DistributedCacheFileSystem extends FilterFileSystem
           }
         }
       }
+    }
+
+  @Override
+  public void initialize(URI name, Configuration conf) throws IOException
+    {
+    super.initialize(name, conf);
+    fs.initialize(name, conf);
     }
 
   @Override
@@ -282,6 +292,12 @@ public class DistributedCacheFileSystem extends FilterFileSystem
     }
 
   @Override
+  public boolean delete(Path f) throws IOException
+    {
+    return delete( f, false );
+    }
+
+  @Override
   public boolean delete( Path f, boolean recursive ) throws IOException
     {
     throw new ReadOnlyFileSystem();
@@ -289,7 +305,6 @@ public class DistributedCacheFileSystem extends FilterFileSystem
 
   /**
    * If f is a cached file, return local file status, otherwise empty array
-   * if f is the root dir, return all cached file statuses
    *
    * @param f
    * @return array of file statuses
@@ -309,18 +324,18 @@ public class DistributedCacheFileSystem extends FilterFileSystem
     // only 1-level virtual directory <tapid>-cdcfs- supported
     if( qualifiedPath.getParent() != null && qualifiedPath.getParent().getParent() == null )
       {
-      ArrayList<FileStatus> dirList = new ArrayList<FileStatus>();
-      Path[] localPaths = checkEmptyDistCache( f );
+      ArrayList<FileStatus> fileList = new ArrayList<FileStatus>();
+      Path[] localPaths = checkEmptyDistCache(f);
       String pathName = qualifiedPath.getName();
       boolean isDir = DIR_PATTERN.matcher( pathName ).matches();
+      boolean isFile = FILE_PATTERN.matcher( pathName ).matches();
 
       for( Path localFile : localPaths )
-        if( isDir && localFile.getName().startsWith( f.getName() ) )
-          return new FileStatus[] { makeDirStatus(qualifiedPath) };
-        else if( !isDir && localFile.getName().equals( f.getName() ) )
-          dirList.add( fs.getFileStatus( localFile) );
+        if(   isDir && localFile.getName().startsWith( f.getName() )
+           || isFile && localFile.getName().equals( f.getName() ) )
+          fileList.add( fs.getFileStatus( localFile) );
 
-      FileStatus[] result = dirList.toArray( new FileStatus[0] );
+      FileStatus[] result = fileList.toArray( new FileStatus[0] );
 
       if( LOG.isDebugEnabled() )
         LOG.debug( "listStatus returns " + Arrays.toString( result ) );
@@ -346,8 +361,7 @@ public class DistributedCacheFileSystem extends FilterFileSystem
   @Override
   public void setWorkingDirectory( Path new_dir )
     {
-    if( makeQualified(new_dir).getParent() != null )
-      throw new UnsupportedOperationException();
+    // nop
     }
 
   @Override
@@ -376,20 +390,24 @@ public class DistributedCacheFileSystem extends FilterFileSystem
     if(    qualifiedPath.getParent() != null
         && qualifiedPath.getParent().getParent() == null )
       {
-      Path[] localFiles = checkEmptyDistCache( f );
       String pathName = qualifiedPath.getName();
-      boolean isDir = DIR_PATTERN.matcher( pathName ).matches();
 
-      for( Path localPath : localFiles )
-        if( isDir && localPath.getName().startsWith(f.getName()) )
-          {
-          FileStatus fileStatus = fs.getFileStatus( localPath );
-          if( fileStatus.isDir() )
-            throw new FileNotFoundException( qualifiedPath + ": must refer to a file" );
-          return fileStatus;
-          }
-        else if( !isDir && localPath.getName().equals(f.getName()) )
-          return makeDirStatus( qualifiedPath );
+      // return directory status without looking up the contents of DC
+      if( DIR_PATTERN.matcher( pathName ).matches() )
+        return makeDirStatus( qualifiedPath );
+
+      if( FILE_PATTERN.matcher( pathName ).matches() )
+        {
+        Path[] localFiles = checkEmptyDistCache(f);
+        for (Path localPath : localFiles)
+          if (localPath.getName().startsWith(f.getName()))
+            {
+            FileStatus fileStatus = fs.getFileStatus(localPath);
+            if (fileStatus.isDir())
+              throw new FileNotFoundException(qualifiedPath + ": must refer to a file");
+            return fileStatus;
+            }
+        }
       }
     throw new FileNotFoundException( qualifiedPath + ": not found." );
     }

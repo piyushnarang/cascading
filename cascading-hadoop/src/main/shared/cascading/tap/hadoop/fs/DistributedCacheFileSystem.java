@@ -204,6 +204,7 @@ public class DistributedCacheFileSystem extends FileSystem
           }
         }
       }
+      DistributedCache.createSymlink(currentConf); // hadoop1
     }
 
   @Override
@@ -327,12 +328,12 @@ public class DistributedCacheFileSystem extends FileSystem
       ArrayList<FileStatus> fileList = new ArrayList<FileStatus>();
       Path[] localPaths = checkEmptyDistCache(f);
       String pathName = qualifiedPath.getName();
+      // should delegate already checks for valid path: !isDir therefore implies file
       boolean isDir = DIR_PATTERN.matcher( pathName ).matches();
-      boolean isFile = FILE_PATTERN.matcher( pathName ).matches();
 
       for( Path localFile : localPaths )
         if(   isDir && localFile.getName().startsWith( f.getName() )
-           || isFile && localFile.getName().equals( f.getName() ) )
+           || !isDir && localFile.getName().equals( f.getName() ) )
           fileList.add( fs.getFileStatus( localFile) );
 
       FileStatus[] result = fileList.toArray( new FileStatus[0] );

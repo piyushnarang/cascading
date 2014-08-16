@@ -397,18 +397,16 @@ public class DistributedCacheFileSystem extends FileSystem
       if( DIR_PATTERN.matcher( pathName ).matches() )
         return makeDirStatus( qualifiedPath );
 
-      if( FILE_PATTERN.matcher( pathName ).matches() )
-        {
-        Path[] localFiles = checkEmptyDistCache(f);
-        for (Path localPath : localFiles)
-          if (localPath.getName().startsWith(f.getName()))
-            {
-            FileStatus fileStatus = fs.getFileStatus(localPath);
-            if (fileStatus.isDir())
-              throw new FileNotFoundException(qualifiedPath + ": must refer to a file");
-            return fileStatus;
-            }
-        }
+      // shouldDelegate already checked for valid pattern. Hence, not dir implies file
+      Path[] localFiles = checkEmptyDistCache(f);
+      for (Path localPath : localFiles)
+        if (localPath.getName().startsWith(f.getName()))
+          {
+          FileStatus fileStatus = fs.getFileStatus(localPath);
+          if (fileStatus.isDir())
+            throw new FileNotFoundException(qualifiedPath + ": must refer to a file");
+          return fileStatus;
+          }
       }
     throw new FileNotFoundException( qualifiedPath + ": not found." );
     }

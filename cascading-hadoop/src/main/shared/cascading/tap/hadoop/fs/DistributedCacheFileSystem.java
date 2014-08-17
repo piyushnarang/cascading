@@ -40,7 +40,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.regex.Pattern;
@@ -80,7 +79,7 @@ public class DistributedCacheFileSystem extends FileSystem
   private static final Pattern FILE_PATTERN = Pattern.compile(
       UUID_REGEX_STR + "-" + DCFS_SCHEME + "-" + UUID_REGEX_STR);
   private static final Pattern PATH_PATTERN = Pattern.compile(
-      UUID_REGEX_STR + "(-" + DCFS_SCHEME + "-" + UUID_REGEX_STR + "){0,1}");
+      UUID_REGEX_STR + "(-" + DCFS_SCHEME + "-" + UUID_REGEX_STR + ")?");
 
   public static class ReadOnlyFileSystem extends UnsupportedOperationException
     {}
@@ -185,15 +184,15 @@ public class DistributedCacheFileSystem extends FileSystem
 
       for( FileStatus fileStatus : fifFiles )
         {
-        if( LOG.isDebugEnabled() )
-          LOG.debug( "Populating DistCache: adding " + fileStatus.getPath() );
-
         // <scheme>://<authority>/<path>#<tapId>-<cdcfs>-<linkuuid>
         String uriStr = String.format("%s#%s-%s-%s",
             fileStatus.getPath().toUri(),    // <scheme>://<authority>/<path>
             tapId,
             DCFS_SCHEME,
             Util.createUniqueID());
+
+        if( LOG.isDebugEnabled() )
+          LOG.debug( "populateDistCache adding: " + uriStr );
 
         try
           {
@@ -243,12 +242,7 @@ public class DistributedCacheFileSystem extends FileSystem
       {
       String pathName = qualifiedPath.getName();
       if( FILE_PATTERN.matcher( pathName ).matches() )
-        {
-        Path[] localPaths = checkEmptyDistCache( qualifiedPath );
-        for( Path localFile : localPaths )
-          if( pathName.equals( localFile.getName() ) )
-            return fs.open( localFile );
-        }
+        return fs.open( new Path( fs.getWorkingDirectory(), pathName ) );
       }
 
     throw new FileNotFoundException( f + ": not found." );
@@ -314,49 +308,25 @@ public class DistributedCacheFileSystem extends FileSystem
   @Override
   public FileStatus[] listStatus( Path f ) throws IOException
     {
+    if( LOG.isDebugEnabled() )
+      LOG.debug( "Calling listStatus on: " + f, new Throwable( "stacktace" ) );
+
     if( shouldDelegate( f ) )
       return fs.listStatus( f );
 
     Path qualifiedPath = makeQualified( f );
 
-    if( LOG.isDebugEnabled() )
-      LOG.debug( "Calling listStatus on: " + qualifiedPath, new Throwable( "stacktace" ) );
-
     // only 1-level virtual directory <tapid>-cdcfs- supported
     if( qualifiedPath.getParent() != null && qualifiedPath.getParent().getParent() == null )
       {
-      ArrayList<FileStatus> fileList = new ArrayList<FileStatus>();
-      Path[] localPaths = checkEmptyDistCache(f);
       String pathName = qualifiedPath.getName();
-      // should delegate already checks for valid path: !isDir therefore implies file
-      boolean isDir = DIR_PATTERN.matcher( pathName ).matches();
-
-      for( Path localFile : localPaths )
-        if(   isDir && localFile.getName().startsWith( f.getName() )
-           || !isDir && localFile.getName().equals( f.getName() ) )
-          fileList.add( fs.getFileStatus( localFile) );
-
-      FileStatus[] result = fileList.toArray( new FileStatus[0] );
-
+      FileStatus[] result = fs.globStatus( new Path ( fs.getWorkingDirectory(), pathName + "*" ) );
       if( LOG.isDebugEnabled() )
-        LOG.debug( "listStatus returns " + Arrays.toString( result ) );
-
+        LOG.debug( "listStatus " + f + ": " + Arrays.toString( result ) );
       return result;
       }
 
     throw new FileNotFoundException( f + ": Only 1-level directories supported." );
-    }
-
-  private Path[] checkEmptyDistCache( Path f ) throws IOException
-    {
-    Path[] localPaths = DistributedCache.getLocalCacheFiles(getConf());
-    if( LOG.isDebugEnabled() )
-      LOG.debug( "checkEmptyDistCache: Checking dist cache " + Arrays.toString(localPaths) + " for : " + f,
-          new Throwable( "stacktrace" ) );
-
-    if( localPaths == null && localPaths.length == 0 )
-      throw new FileNotFoundException(f + ": Empty DistributedCache.");
-    return localPaths;
     }
 
   @Override
@@ -380,13 +350,13 @@ public class DistributedCacheFileSystem extends FileSystem
   @Override
   public FileStatus getFileStatus( Path f ) throws IOException
     {
+    if( LOG.isDebugEnabled() )
+      LOG.debug( "Calling getFileStatus on: " + f, new Throwable( "stacktace" ) );
+
     if( shouldDelegate( f ) )
       return fs.getFileStatus( f );
 
     Path qualifiedPath = makeQualified( f );
-
-    if( LOG.isDebugEnabled() )
-      LOG.debug( "Calling getFileStatus on: " + qualifiedPath, new Throwable( "stacktace" ) );
 
     if(    qualifiedPath.getParent() != null
         && qualifiedPath.getParent().getParent() == null )
@@ -397,16 +367,11 @@ public class DistributedCacheFileSystem extends FileSystem
       if( DIR_PATTERN.matcher( pathName ).matches() )
         return makeDirStatus( qualifiedPath );
 
-      // shouldDelegate already checked for valid pattern. Hence, not dir implies file
-      Path[] localFiles = checkEmptyDistCache(f);
-      for (Path localPath : localFiles)
-        if (localPath.getName().startsWith(f.getName()))
-          {
-          FileStatus fileStatus = fs.getFileStatus(localPath);
-          if (fileStatus.isDir())
-            throw new FileNotFoundException(qualifiedPath + ": must refer to a file");
-          return fileStatus;
-          }
+      // shouldDelegate already checked for valid path pattern. Hence, not dir implies file
+      FileStatus fileStatus = fs.getFileStatus( new Path( fs.getWorkingDirectory(), pathName) );
+      if( LOG.isDebugEnabled() )
+        LOG.debug( "getFileStatus " +f + ": " + fileStatus );
+      return fileStatus;
       }
     throw new FileNotFoundException( qualifiedPath + ": not found." );
     }

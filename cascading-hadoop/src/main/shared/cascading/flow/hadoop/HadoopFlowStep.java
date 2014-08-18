@@ -337,7 +337,8 @@ public class HadoopFlowStep extends BaseFlowStep<JobConf>
       JobConf accumulatedJob = flowProcess.copyConfig( conf );
       tap.sourceConfInit( flowProcess, accumulatedJob );
 
-      if( !HadoopUtil.isLocal( accumulatedJob ) )
+      if(    accumulatedJob.getBoolean("cascading.distcache.hashjoin", true)
+          && !HadoopUtil.isLocal( accumulatedJob ) )
         DistributedCacheFileSystem.distCacheTap( tap, accumulatedJob, conf );
 
       Map<String, String> map = flowProcess.diffConfigIntoMap( conf, accumulatedJob );

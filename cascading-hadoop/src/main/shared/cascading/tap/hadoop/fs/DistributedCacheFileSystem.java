@@ -33,7 +33,11 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RawLocalFileSystem;
 import org.apache.hadoop.fs.permission.FsPermission;
-import org.apache.hadoop.mapred.*;
+import org.apache.hadoop.mapred.FileInputFormat;
+import org.apache.hadoop.mapred.InputSplit;
+import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.mapred.RecordReader;
+import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.util.Progressable;
 
 import java.io.FileNotFoundException;
@@ -311,7 +315,7 @@ public class DistributedCacheFileSystem extends FileSystem
     if( LOG.isDebugEnabled() )
       LOG.debug( "Calling listStatus on: " + f, new Throwable( "stacktace" ) );
 
-    if( shouldDelegate( f ) )
+    if( shouldDelegate(f) )
       return fs.listStatus( f );
 
     Path qualifiedPath = makeQualified( f );
@@ -368,7 +372,7 @@ public class DistributedCacheFileSystem extends FileSystem
         return makeDirStatus( qualifiedPath );
 
       // shouldDelegate already checked for valid path pattern. Hence, not dir implies file
-      FileStatus fileStatus = fs.getFileStatus( new Path( fs.getWorkingDirectory(), pathName) );
+      FileStatus fileStatus = fs.getFileStatus(new Path(fs.getWorkingDirectory(), pathName));
       if( LOG.isDebugEnabled() )
         LOG.debug( "getFileStatus " +f + ": " + fileStatus );
       return fileStatus;

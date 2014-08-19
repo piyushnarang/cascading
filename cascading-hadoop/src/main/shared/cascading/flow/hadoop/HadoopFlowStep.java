@@ -484,5 +484,4 @@ public class HadoopFlowStep extends BaseFlowStep<JobConf>
     {
     return getReducerTraps().get( name );
     }
-
   }

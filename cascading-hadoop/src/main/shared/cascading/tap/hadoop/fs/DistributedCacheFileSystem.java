@@ -20,7 +20,11 @@
 
 package cascading.tap.hadoop.fs;
 
+import cascading.flow.hadoop.util.HadoopUtil;
+import cascading.tap.MultiSourceTap;
 import cascading.tap.Tap;
+import cascading.tap.hadoop.GlobHfs;
+import cascading.tap.hadoop.Hfs;
 import cascading.util.Util;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -46,6 +50,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.regex.Pattern;
 
 /**
@@ -122,6 +127,10 @@ public class DistributedCacheFileSystem extends FileSystem
    */
   public static void distCacheTap(Tap tap, JobConf accumulatedConf, JobConf stepConf)
     {
+    if(    !distCacheEnabled( accumulatedConf )
+        || !distCacheable( tap) )
+      return;
+
     String tapId = Tap.id( tap );
     Path[] p = FileInputFormat.getInputPaths( accumulatedConf );
 
@@ -149,6 +158,28 @@ public class DistributedCacheFileSystem extends FileSystem
     // replace the real paths by a virtual dist cache "dir" tapid
     FileInputFormat.setInputPaths( accumulatedConf, DCFS_ROOT + tapId );
     accumulatedConf.setClass( DCFS_IMPL, DistributedCacheFileSystem.class, FileSystem.class );
+    }
+
+  private static boolean distCacheEnabled( JobConf accumulatedConf )
+    {
+    return  accumulatedConf.getBoolean( "cascading.distcache.hashjoin", true )
+        && !HadoopUtil.isLocal( accumulatedConf );
+    }
+
+  public static boolean distCacheable( Tap tap )
+    {
+    boolean hfsBased = tap instanceof Hfs || tap instanceof GlobHfs;
+    // non-GlobHfs msp's have to be processed recursively
+    if( !hfsBased && tap instanceof MultiSourceTap )
+      {
+      MultiSourceTap msp = (MultiSourceTap)tap;
+      for( Iterator<Tap> tapIter = msp.getChildTaps(); tapIter.hasNext(); )
+        if( !distCacheable( tapIter.next() ) )
+          return false;
+      return msp.getNumChildTaps() > 0; // accept only non-empty multi-taps
+      }
+
+    return hfsBased;
     }
 
   /**

@@ -52,6 +52,8 @@ public interface InputData
   String inputFileNums10 = inputPath + "nums.10.txt";
   String inputFileCritics = inputPath + "critics.txt";
   String inputFileUpper = inputPath + "upper.txt";
+  String inputFileUpper2 = inputPath + "upper2.txt";
+  String inputFileUpper3 = inputPath + "upper3.txt";
   String inputFileLower = inputPath + "lower.txt";
   String inputFileLowerOffset = inputPath + "lower-offset.txt";
   String inputFileJoined = inputPath + "lower+upper.txt";

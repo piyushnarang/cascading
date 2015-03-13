@@ -86,9 +86,9 @@ public class DistributedCacheFileSystem extends FileSystem
 
   private static final Pattern DIR_PATTERN = Pattern.compile(UUID_REGEX_STR);
   private static final Pattern FILE_PATTERN = Pattern.compile(
-      UUID_REGEX_STR + "-" + DCFS_SCHEME + "-" + UUID_REGEX_STR);
+      UUID_REGEX_STR + "-" + DCFS_SCHEME + "-" + UUID_REGEX_STR + ".*");
   private static final Pattern PATH_PATTERN = Pattern.compile(
-      UUID_REGEX_STR + "(-" + DCFS_SCHEME + "-" + UUID_REGEX_STR + ")?");
+      UUID_REGEX_STR + "(-" + DCFS_SCHEME + "-" + UUID_REGEX_STR + ".*)?");
 
   public static class ReadOnlyFileSystem extends UnsupportedOperationException
     {}
@@ -219,12 +219,19 @@ public class DistributedCacheFileSystem extends FileSystem
 
       for( FileStatus fileStatus : fifFiles )
         {
-        // <scheme>://<authority>/<path>#<tapId>-<cdcfs>-<linkuuid>
-        String uriStr = String.format("%s#%s-%s-%s",
+        // <scheme>://<authority>/<path>#<tapId>-<cdcfs>-<linkuuid><suffix>
+        final String pathName = fileStatus.getPath().getName();
+        final int suffixPos = pathName.lastIndexOf('.');
+        final String suffix = suffixPos < 0
+            ? ""
+            : pathName.substring(suffixPos); // e.g., ".lzo"
+
+        String uriStr = String.format("%s#%s-%s-%s%s",
             fileStatus.getPath().toUri(),    // <scheme>://<authority>/<path>
             tapId,
             DCFS_SCHEME,
-            Util.createUniqueID());
+            Util.createUniqueID(),
+            suffix);
 
         if( LOG.isDebugEnabled() )
           LOG.debug( "populateDistCache adding: " + uriStr );

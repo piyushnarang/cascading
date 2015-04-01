@@ -219,19 +219,16 @@ public class DistributedCacheFileSystem extends FileSystem
 
       for( FileStatus fileStatus : fifFiles )
         {
-        // <scheme>://<authority>/<path>#<tapId>-<cdcfs>-<linkuuid><suffix>
-        final String pathName = fileStatus.getPath().getName();
-        final int suffixPos = pathName.lastIndexOf('.');
-        final String suffix = suffixPos < 0
-            ? ""
-            : pathName.substring(suffixPos); // e.g., ".lzo"
+        final Path path = fileStatus.getPath();
+        final String pathHash = Util.createID(path.toUri().toString());
 
-        String uriStr = String.format("%s#%s-%s-%s%s",
-            fileStatus.getPath().toUri(),    // <scheme>://<authority>/<path>
-            tapId,
-            DCFS_SCHEME,
-            Util.createUniqueID(),
-            suffix);
+        // <scheme>://<authority>/<path>#<tapid>-cdcfs-<uriHash>-<fileName.extension>
+        String uriStr = String.format("%s#%s-%s-%s-%s",
+            path.toUri(),                              // <scheme>://<authority>/<path>
+            tapId,                                     // #tapId-
+            DCFS_SCHEME,                               // cdcfs-
+            pathHash,                                  // hex-
+            path.getName());                           // path
 
         if( LOG.isDebugEnabled() )
           LOG.debug( "populateDistCache adding: " + uriStr );

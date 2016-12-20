@@ -276,7 +276,7 @@ public class TezUtil
     LocalResource resource = LocalResource.newInstance(
       yarnUrlFromPath,
       type,
-      LocalResourceVisibility.APPLICATION,
+      LocalResourceVisibility.PUBLIC,
       len,
       modificationTime );
 

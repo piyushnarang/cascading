@@ -133,7 +133,7 @@ public class Hadoop2TezFlow extends BaseFlow<TezConfiguration>
 
   private String createStagingRoot()
     {
-    return ".staging" + Path.SEPARATOR + getID();
+    return ".staging";
     }
 
   @Override

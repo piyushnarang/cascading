@@ -242,7 +242,7 @@ public class Hadoop2TezFlowStep extends BaseFlowStep<TezConfiguration>
         FlowNode edgeSourceFlowNode = nodeGraph.getEdgeSource( processEdge );
         Vertex sourceVertex = vertexMap.get( edgeSourceFlowNode );
 
-        LOG.debug( "adding edge between: {} and {}", sourceVertex, targetVertex );
+        LOG.info( "adding edge between: {} and {}", sourceVertex, targetVertex );
 
         dag.addEdge( Edge.create( sourceVertex, targetVertex, edgeProperty ) );
         }
@@ -280,6 +280,7 @@ public class Hadoop2TezFlowStep extends BaseFlowStep<TezConfiguration>
   private EdgeProperty createEdgeProperty( TezConfiguration config, ProcessEdge processEdge )
     {
     FlowElement flowElement = processEdge.getFlowElement();
+    LOG.info("Processing flow element: " + flowElement.toString());
 
     EdgeValues edgeValues = new EdgeValues( new TezConfiguration( config ), processEdge );
 
@@ -297,7 +298,9 @@ public class Hadoop2TezFlowStep extends BaseFlowStep<TezConfiguration>
       applyGroup( edgeValues );
     else if( ( flowElement instanceof Boundary || flowElement instanceof Merge ) && processEdge.getSinkAnnotations().contains( StreamMode.Accumulated ) )
       applyBoundaryMergeAccumulated( edgeValues );
-    else if( flowElement instanceof Boundary || flowElement instanceof Merge )
+    else if (flowElement instanceof Boundary || flowElement instanceof Merge)
+      applyBoundary( edgeValues );
+    else if( flowElement instanceof Merge )
       applyBoundaryMerge( edgeValues );
     else
       throw new IllegalStateException( "unsupported flow element: " + flowElement.getClass().getCanonicalName() );
@@ -312,6 +315,19 @@ public class Hadoop2TezFlowStep extends BaseFlowStep<TezConfiguration>
     processEdge.addEdgeAnnotation( edgeValues.movementType );
     processEdge.addEdgeAnnotation( edgeValues.sourceType );
     processEdge.addEdgeAnnotation( edgeValues.schedulingType );
+    }
+
+    private EdgeValues applyBoundary( EdgeValues edgeValues )
+    {
+      // todo: support for one to one
+      edgeValues.outputClassName = UnorderedPartitionedKVOutput.class.getName();
+      edgeValues.inputClassName = UnorderedKVInput.class.getName();
+
+      edgeValues.movementType = EdgeProperty.DataMovementType.ONE_TO_ONE;
+      edgeValues.sourceType = EdgeProperty.DataSourceType.PERSISTED;
+      edgeValues.schedulingType = EdgeProperty.SchedulingType.SEQUENTIAL;
+
+      return edgeValues;
     }
 
   private EdgeValues applyBoundaryMerge( EdgeValues edgeValues )
@@ -361,12 +377,13 @@ public class Hadoop2TezFlowStep extends BaseFlowStep<TezConfiguration>
       }
     else
       {
+      LOG.info("Processing flow element groupBy and updating movement type");
       addComparators( edgeValues.config, "cascading.sort.comparator", group.getSortingSelectors(), edgeValues.getResolvedSortFieldsMap().get( ordinal ) );
 
       edgeValues.outputClassName = OrderedPartitionedKVOutput.class.getName();
       edgeValues.inputClassName = OrderedGroupedKVInput.class.getName();
 
-      edgeValues.movementType = EdgeProperty.DataMovementType.SCATTER_GATHER;
+      edgeValues.movementType = EdgeProperty.DataMovementType.ONE_TO_ONE; // ONE_TO_ONE
       edgeValues.sourceType = EdgeProperty.DataSourceType.PERSISTED;
       edgeValues.schedulingType = EdgeProperty.SchedulingType.SEQUENTIAL;
       }
@@ -480,6 +497,7 @@ public class Hadoop2TezFlowStep extends BaseFlowStep<TezConfiguration>
 
     HadoopUtil.setIsInflow( conf ); // must be called after all taps configurations have been retrieved
 
+    LOG.info("Trying to figure out parallelism for flowNode: " + flowNode.getID() + " , " + flowNode.getName());
     int parallelism = getParallelism( flowNode, conf );
 
     if( parallelism == 0 )
@@ -594,6 +612,7 @@ public class Hadoop2TezFlowStep extends BaseFlowStep<TezConfiguration>
       if( numSinkParts == 0 )
         continue;
 
+      LOG.info("numSinkParts for flowNode: " + flowNode.getID() + " , " + flowNode.getName() + " is = " + numSinkParts);
       if( parallelism != Integer.MAX_VALUE )
         LOG.info( "multiple sink taps in flow node declaring numSinkParts, choosing lowest value. see cascading.flow.FlowRuntimeProps for broader control." );
 
@@ -603,6 +622,7 @@ public class Hadoop2TezFlowStep extends BaseFlowStep<TezConfiguration>
     if( parallelism != Integer.MAX_VALUE )
       return parallelism;
 
+    LOG.info("Falling back to gather partitions value = " + conf.getInt( FlowRuntimeProps.GATHER_PARTITIONS, 0 ));
     return conf.getInt( FlowRuntimeProps.GATHER_PARTITIONS, 0 );
     }
 

@@ -298,7 +298,7 @@ public class Hadoop2TezFlowStep extends BaseFlowStep<TezConfiguration>
       applyGroup( edgeValues );
     else if( ( flowElement instanceof Boundary || flowElement instanceof Merge ) && processEdge.getSinkAnnotations().contains( StreamMode.Accumulated ) )
       applyBoundaryMergeAccumulated( edgeValues );
-    else if (flowElement instanceof Boundary || flowElement instanceof Merge)
+    else if (flowElement instanceof Boundary)
       applyBoundary( edgeValues );
     else if( flowElement instanceof Merge )
       applyBoundaryMerge( edgeValues );
@@ -320,7 +320,7 @@ public class Hadoop2TezFlowStep extends BaseFlowStep<TezConfiguration>
     private EdgeValues applyBoundary( EdgeValues edgeValues )
     {
       // todo: support for one to one
-      edgeValues.outputClassName = UnorderedPartitionedKVOutput.class.getName();
+      edgeValues.outputClassName = UnorderedKVOutput.class.getName();
       edgeValues.inputClassName = UnorderedKVInput.class.getName();
 
       edgeValues.movementType = EdgeProperty.DataMovementType.ONE_TO_ONE;

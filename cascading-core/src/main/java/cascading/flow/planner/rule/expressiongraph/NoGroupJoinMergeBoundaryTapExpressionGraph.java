@@ -51,7 +51,7 @@ public class NoGroupJoinMergeBoundaryTapExpressionGraph extends ExpressionGraph
           new FlowElementExpression( Extent.class ),
           new FlowElementExpression( Group.class ),
           new FlowElementExpression( HashJoin.class ),
-          and( new FlowElementExpression( Merge.class ), not( new AnnotationExpression( RoleMode.Logical ) ) ),
+          and( new FlowElementExpression( Merge.class ), new AnnotationExpression( RoleMode.Logical ) ),
           new FlowElementExpression( Boundary.class ),
           new FlowElementExpression( Tap.class )
         )

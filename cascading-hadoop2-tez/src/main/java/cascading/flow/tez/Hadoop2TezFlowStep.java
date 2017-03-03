@@ -383,7 +383,7 @@ public class Hadoop2TezFlowStep extends BaseFlowStep<TezConfiguration>
       edgeValues.outputClassName = OrderedPartitionedKVOutput.class.getName();
       edgeValues.inputClassName = OrderedGroupedKVInput.class.getName();
 
-      edgeValues.movementType = EdgeProperty.DataMovementType.ONE_TO_ONE; // ONE_TO_ONE
+      edgeValues.movementType = EdgeProperty.DataMovementType.SCATTER_GATHER;
       edgeValues.sourceType = EdgeProperty.DataSourceType.PERSISTED;
       edgeValues.schedulingType = EdgeProperty.SchedulingType.SEQUENTIAL;
       }
